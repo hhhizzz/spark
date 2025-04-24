@@ -52,9 +52,7 @@ object CodeFormatter {
       val buf = new StringBuffer
       val m: Matcher = COMMENT_HOLDER.matcher(line)
       while (m.find()) {
-        val repl = code.comment
-          .get(m.group(1))
-          .getOrElse(m.group(0))
+        val repl = code.comment.getOrElse(m.group(1), m.group(0))
         m.appendReplacement(buf, Matcher.quoteReplacement(repl))
       }
       m.appendTail(buf)
@@ -163,8 +161,8 @@ private class CodeFormatter {
     } else {
       indentString
     }
-    code.append(f"/* ${currentLine}%03d */")
-    if (line.trim().length > 0) {
+    code.append(f"/* $currentLine%03d */")
+    if (line.trim().nonEmpty) {
       code.append(" ") // add a space after the line number comment.
       code.append(thisLineIndent)
       if (inCommentBlock && line.startsWith("*") || line.startsWith("*/")) code.append(" ")
