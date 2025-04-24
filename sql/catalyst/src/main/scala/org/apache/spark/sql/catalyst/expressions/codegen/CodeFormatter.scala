@@ -18,7 +18,7 @@
 package org.apache.spark.sql.catalyst.expressions.codegen
 
 import java.lang.{StringBuilder => JStringBuilder}
-import java.util.regex.Matcher
+import java.util.regex.{Matcher, Pattern}
 
 /**
  * An utility class that indents a block of code based on the curly braces and parentheses.
@@ -27,24 +27,42 @@ import java.util.regex.Matcher
  * Written by Matei Zaharia.
  */
 object CodeFormatter {
-  val commentHolder = """\/\*(.+?)\*\/""".r
-  val commentRegexp =
-    ("""([ |\t]*?\/\*[\s|\S]*?\*\/[ |\t]*?)|""" + // strip /*comment*/
-      """([ |\t]*?\/\/[\s\S]*?\n)""").r           // strip //comment
-  val extraNewLinesRegexp = """\n\s*\n""".r       // strip extra newlines
+  /* ---------- pre‑compiled Java patterns ---------- */
+  private val COMMENT_HOLDER: Pattern =
+    Pattern.compile("/\\*(.+?)\\*/", Pattern.DOTALL)
+
+  private val COMMENT_REGEXP: Pattern =
+    Pattern.compile("([ \\t]*?/\\*[\\s\\S]*?\\*/[ \\t]*?)|([ \\t]*?//[\\s\\S]*?\\n)")
+
+  private val EXTRA_NEW_LINES: Pattern =
+    Pattern.compile("\\n\\s*\\n")
+  /* ------------------------------------------------ */
+
 
   def format(code: CodeAndComment, maxLines: Int = -1): String = {
     val formatter = new CodeFormatter
     val lines = code.body.split("\n")
     val needToTruncate = maxLines >= 0 && lines.length > maxLines
     val filteredLines = if (needToTruncate) lines.take(maxLines) else lines
-    filteredLines.foreach { line =>
-      val commentReplaced = commentHolder.replaceAllIn(
-        line.trim,
-        m => code.comment.get(m.group(1)).map(Matcher.quoteReplacement).getOrElse(m.group(0)))
-      val comments = commentReplaced.split("\n")
-      comments.foreach(formatter.addLine)
+
+    filteredLines.foreach { rawLine =>
+      val line = rawLine.trim
+
+      // --- Java matcher replacement for COMMENT_HOLDER ---
+      val buf = new StringBuffer
+      val m: Matcher = COMMENT_HOLDER.matcher(line)
+      while (m.find()) {
+        val repl = code.comment
+          .get(m.group(1))
+          .getOrElse(m.group(0))
+        m.appendReplacement(buf, Matcher.quoteReplacement(repl))
+      }
+      m.appendTail(buf)
+      // ----------------------------------------------------
+
+      buf.toString.split("\n").foreach(formatter.addLine)
     }
+
     if (needToTruncate) {
       formatter.addLine(s"[truncated to $maxLines lines (total lines is ${lines.length})]")
     }
@@ -78,26 +96,22 @@ object CodeFormatter {
       }
     }
 
-    var lastLine: String = "dummy"
+    var lastLine = "dummy"
     codeAndComment.body.split('\n').foreach { l =>
-      val line = l.trim()
+      val line = l.trim
+      val skip = getComment(lastLine)
+        .zip(getComment(line))
+        .exists { case (lastC, currC) => lastC.substring(3).contains(currC.substring(3)) }
 
-      val skip = getComment(lastLine).zip(getComment(line)).exists {
-        case (lastComment, currentComment) =>
-          lastComment.substring(3).contains(currentComment.substring(3))
-      }
-
-      if (!skip) {
-        code.append(line).append("\n")
-      }
-
+      if (!skip) code.append(line).append("\n")
       lastLine = line
     }
-    new CodeAndComment(code.toString.trim(), map)
+    new CodeAndComment(code.toString.trim, map)
   }
 
   def stripExtraNewLinesAndComments(input: String): String = {
-    extraNewLinesRegexp.replaceAllIn(commentRegexp.replaceAllIn(input, ""), "\n")
+    val noComments = COMMENT_REGEXP.matcher(input).replaceAll("")
+    EXTRA_NEW_LINES.matcher(noComments).replaceAll("\n")
   }
 }
 
